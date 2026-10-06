@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-class EspBLE {
+import 'cpr_metrics.dart';
+
+class EspBle {
   static final Guid serviceUuid = Guid(
     '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
   );
@@ -20,6 +23,10 @@ class EspBLE {
   BluetoothCharacteristic? telemetryCharacteristic;
   BluetoothCharacteristic? commandCharacteristic;
 
+  final _telemetryController = StreamController<CprMetrics>.broadcast();
+
+  Stream<CprMetrics> get telemetry => _telemetryController.stream;
+
   StreamSubscription<List<ScanResult>>? scanSubscription;
 
   /// Scan for the ESP32.
@@ -30,7 +37,7 @@ class EspBLE {
       for (final result in results) {
         final name = result.advertisementData.advName;
 
-        print('Found: $name (${result.device.remoteId})');
+        debugPrint('Found: $name (${result.device.remoteId})');
 
         if (name == 'CPReady') {
           foundDevice = result.device;
@@ -58,22 +65,22 @@ class EspBLE {
     this.device = device;
 
     await device.connect(
-            license: License.nonprofit
+      license: License.nonprofit,
     );
 
-    print('Connected to ESP32');
+    debugPrint('Connected to ESP32');
 
     final services = await device.discoverServices();
 
     for (final service in services) {
-      print('Service: ${service.uuid}');
+      debugPrint('Service: ${service.uuid}');
 
       if (service.uuid != serviceUuid) {
         continue;
       }
 
       for (final characteristic in service.characteristics) {
-        print('Characteristic: ${characteristic.uuid}');
+        debugPrint('Characteristic: ${characteristic.uuid}');
 
         if (characteristic.uuid == notifyUuid) {
           telemetryCharacteristic = characteristic;
@@ -93,7 +100,7 @@ class EspBLE {
       throw Exception('ESP32 command characteristic not found');
     }
 
-    print('ESP32 characteristics found');
+    debugPrint('ESP32 characteristics found');
   }
 
   /// Start receiving telemetry notifications.
@@ -106,18 +113,17 @@ class EspBLE {
 
     await characteristic.setNotifyValue(true);
 
-    characteristic.lastValueStream.listen((value) {
-      print('Received ${value.length} bytes');
+    characteristic.lastValueStream.listen(_onTelemetryChunk);
+  }
 
-      print('Raw bytes: $value');
-
-      try {
-        final text = utf8.decode(value);
-        print('As UTF-8: $text');
-      } catch (_) {
-        print('Packet is binary data');
-      }
-    });
+  void _onTelemetryChunk(List<int> value) {
+    try {
+      final metrics = CprMetrics.fromBytes(value);
+      _telemetryController.add(metrics);
+    } catch (error) {
+      debugPrint('Telemetry decode failed: $error');
+      debugPrint('Raw bytes: $value');
+    }
   }
 
   /// Send a command.
@@ -135,6 +141,8 @@ class EspBLE {
 
   Future<void> disconnect() async {
     await device?.disconnect();
+
+    await _telemetryController.close();
 
     device = null;
     telemetryCharacteristic = null;
