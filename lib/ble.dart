@@ -23,16 +23,30 @@ class EspBle {
   BluetoothCharacteristic? telemetryCharacteristic;
   BluetoothCharacteristic? commandCharacteristic;
 
-  final _telemetryController = StreamController<CprMetrics>.broadcast();
-
-  Stream<CprMetrics> get telemetry => _telemetryController.stream;
-
   StreamSubscription<List<ScanResult>>? scanSubscription;
+  StreamSubscription<BluetoothConnectionState>? _connectionSub;
+  StreamSubscription<List<int>>? _notifySub;
+
+  StreamController<CprMetrics>? _telemetryController;
+
+  /// Invoked when the ESP32 disconnects unexpectedly (not via [disconnect]).
+  VoidCallback? onDisconnected;
+
+  bool _intentionalDisconnect = false;
+
+  /// Broadcast stream of decoded telemetry packets. Recreated after
+  /// [disconnect], so callers should subscribe after each successful connect.
+  Stream<CprMetrics> get telemetry {
+    final controller =
+        _telemetryController ??= StreamController<CprMetrics>.broadcast();
+    return controller.stream;
+  }
 
   /// Scan for the ESP32.
   Future<BluetoothDevice?> scan() async {
     BluetoothDevice? foundDevice;
 
+    await scanSubscription?.cancel();
     scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
       for (final result in results) {
         final name = result.advertisementData.advName;
@@ -60,15 +74,26 @@ class EspBle {
     return foundDevice;
   }
 
-  // Connect
+  /// Connect and discover the CPReady GATT characteristics.
   Future<void> connect(BluetoothDevice device) async {
     this.device = device;
+    _intentionalDisconnect = false;
 
     await device.connect(
       license: License.nonprofit,
     );
 
     debugPrint('Connected to ESP32');
+
+    // Watch for the ESP32 dropping the link while the app is using it.
+    await _connectionSub?.cancel();
+    _connectionSub = device.connectionState.listen((state) {
+      if (state == BluetoothConnectionState.disconnected &&
+          !_intentionalDisconnect) {
+        debugPrint('ESP32 disconnected unexpectedly');
+        onDisconnected?.call();
+      }
+    });
 
     final services = await device.discoverServices();
 
@@ -113,20 +138,23 @@ class EspBle {
 
     await characteristic.setNotifyValue(true);
 
-    characteristic.lastValueStream.listen(_onTelemetryChunk);
+    await _notifySub?.cancel();
+    _notifySub = characteristic.lastValueStream.listen(_onTelemetryChunk);
   }
 
   void _onTelemetryChunk(List<int> value) {
+    if (value.isEmpty) return;
+
     try {
       final metrics = CprMetrics.fromBytes(value);
-      _telemetryController.add(metrics);
+      _telemetryController?.add(metrics);
     } catch (error) {
       debugPrint('Telemetry decode failed: $error');
       debugPrint('Raw bytes: $value');
     }
   }
 
-  /// Send a command.
+  /// Send a text command.
   Future<void> sendCommand(String command) async {
     final characteristic = commandCharacteristic;
 
@@ -140,9 +168,18 @@ class EspBle {
   }
 
   Future<void> disconnect() async {
+    _intentionalDisconnect = true;
+
+    await _connectionSub?.cancel();
+    _connectionSub = null;
+
+    await _notifySub?.cancel();
+    _notifySub = null;
+
     await device?.disconnect();
 
-    await _telemetryController.close();
+    await _telemetryController?.close();
+    _telemetryController = null;
 
     device = null;
     telemetryCharacteristic = null;
