@@ -22,7 +22,7 @@
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
     <application
-        android:label="iamfluttered"
+        android:label="CPReady"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
