@@ -343,9 +343,9 @@ class HandPlacementScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       const Text(
-                        'Lorem ipsum: dolor sit amet, consectetur adipiscing elit. '
-                        'Sed do eiusmod tempor incididunt ut labore et dolore magna'
-                        'aliqua. Ut enim ad minim veniam.',
+                        'Lorem ipsum dolor sit amet, consectetur adipiscing elit. '
+                        'Sed do eiusmod tempor incididunt ut labore et dolore '
+                        'magna aliqua. Ut enim ad minim veniam.',
                         textAlign: TextAlign.center,
                       ),
                     ],
